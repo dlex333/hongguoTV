@@ -29,6 +29,7 @@ class ContentRepository(val http: OkHttpClient = OkHttpClient.Builder().connectT
     private val site = "https://hongguoduanju.com"
     private data class SearchCursor(val searchId: String, val passback: String, val offset: Int?, val updatedAt: Long)
     private val searchCursors=linkedMapOf<Triple<ContentType,String,Int>,SearchCursor>()
+    private val streamCache=linkedMapOf<String,Pair<Long,StreamInfo>>()
     private fun text(url: String, signed: Signer.Request? = null): String {
         val request = Request.Builder().url(url).header("User-Agent",VendorConstants.VIDEO_UA).header("Accept-Language","zh-CN,zh;q=0.9")
         signed?.headers?.forEach { (k,v) -> request.header(k,v) }
@@ -125,6 +126,8 @@ class ContentRepository(val http: OkHttpClient = OkHttpClient.Builder().connectT
     }
     fun stream(id: String, maxQuality: Int = 1080): StreamInfo {
         require(id.matches(Regex("[0-9]{1,30}")))
+        val cacheKey="$id|$maxQuality"
+        synchronized(streamCache) { streamCache[cacheKey]?.takeIf { clock()-it.first<60_000L }?.let { return it.second } }
         val payload="""{"biz_param":{"detail_page_version":0,"device_level":3,"disable_digg_stat":false,"need_all_video_definition":true,"need_mp4_align":false,"use_os_player":false,"use_server_dns":false,"video_platform":1024},"mixed_video_id_map":{"1004":["$id"]}}""".toByteArray()
         val signed=signer.sign("https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/",VendorConstants.device,payload)
         val data=JSONObject(text(signed.url,signed))
@@ -148,7 +151,9 @@ class ContentRepository(val http: OkHttpClient = OkHttpClient.Builder().connectT
         if(!url.startsWith("https://") && !url.startsWith("http://")) throw IOException("播放地址无效")
         val key=item.str("spade_a").takeIf { it.isNotEmpty() }?.let(MediaCrypto::deriveKey)
         val quality=if(selected.first>0) "${selected.first}P"+(if(selected.first>maxQuality) "（兼容资源）" else "") else "自动"
-        return StreamInfo(url,key,quality)
+        val result=StreamInfo(url,key,quality)
+        synchronized(streamCache) { streamCache[cacheKey]=clock() to result; while(streamCache.size>32) streamCache.remove(streamCache.keys.first()) }
+        return result
     }
     companion object {
         fun extractRouter(html: String): JSONObject {

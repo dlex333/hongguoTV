@@ -12,7 +12,7 @@ object PlaybackQuality {
 class RecoveryBudget {
     var attempts=0; private set
     val remaining get()=attempts<3
-    val delayMillis get()=listOf(1000L,2500L,5000L).getOrNull(attempts)
+    val delayMillis get()=listOf(3000L,10000L,30000L).getOrNull(attempts)
     fun consume(): Boolean { if(!remaining) return false; attempts++; return true }
     fun reset() { attempts=0 }
 }
