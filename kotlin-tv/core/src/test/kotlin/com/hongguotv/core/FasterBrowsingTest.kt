@@ -65,7 +65,7 @@ class FasterBrowsingTest {
         server.start()
         val client=OkHttpClient()
         try {
-            val remote=RemoteVideo(client,StreamInfo("http://127.0.0.1:${server.address.port}/video",null,"720P")).warm()
+            val remote=RemoteVideo(client,StreamInfo(listOf(StreamInfo.Candidate("http://127.0.0.1:${server.address.port}/video",null)),"720P")).warm()
             assertEquals(listOf("bytes=0-262143","bytes=262144-1048575"),ranges.toList())
             assertArrayEquals(data.copyOfRange(11,700011),remote.read(11,700000)); assertEquals(2,ranges.size)
             assertArrayEquals(data.copyOfRange(1000000,1200000),remote.read(1000000,200000))

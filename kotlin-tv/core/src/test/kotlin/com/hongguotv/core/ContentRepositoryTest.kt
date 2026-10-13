@@ -23,7 +23,7 @@ class ContentRepositoryTest {
     @Test fun incompatibleByteVc2DoesNotBecomeAudioOnlyPlayback() {
         val repo=streamRepository(Triple(720,"bytevc2","https://example.com/unsupported"),Triple(1080,"bytevc1","https://example.com/hevc"))
         val result=repo.stream("123",720)
-        assertEquals("https://example.com/hevc",result.url)
+        assertEquals("https://example.com/hevc",result.candidates.first().url)
         assertEquals("1080P（兼容资源）",result.quality)
     }
 

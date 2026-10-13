@@ -15,10 +15,11 @@ class RemoteVideo(private val http: OkHttpClient, val info: StreamInfo): Closeab
     var total: Long=0; private set
     private lateinit var prepared: MediaCrypto.Prepared
     @Volatile private var prefix=byteArrayOf()
+    @Volatile private var active: StreamInfo.Candidate = info.candidates.first()
     private fun range(start: Long,end: Long): Range {
         if(closed) throw IOException("播放请求已取消")
         require(start>=0 && end>=start && end-start<8*1024*1024)
-        val request=Request.Builder().url(info.url).header("User-Agent",VendorConstants.VIDEO_UA).header("Referer","https://novel.snssdk.com/").header("Range","bytes=$start-$end").header("Accept-Encoding","identity").build()
+        val request=Request.Builder().url(active.url).header("User-Agent",VendorConstants.VIDEO_UA).header("Referer","https://novel.snssdk.com/").header("Range","bytes=$start-$end").header("Accept-Encoding","identity").build()
         val call=http.newCall(request)
         synchronized(calls) { if(closed) throw IOException("播放请求已取消"); calls+=call }
         try {
@@ -37,13 +38,24 @@ class RemoteVideo(private val http: OkHttpClient, val info: StreamInfo): Closeab
     }
     @Synchronized fun prepare(): RemoteVideo {
         if(::prepared.isInitialized) return this
-        val first=range(0,256*1024-1); total=first.total
-        prefix=first.bytes
-        val end=MediaCrypto.headerEnd(first.bytes,total)
-        val header=if(end>first.bytes.size) first.bytes+range(first.bytes.size.toLong(),end-1L).bytes else first.bytes.copyOf(end)
-        prepared=MediaCrypto.prepare(header,info.key)
-        if(prepared.samples.any { it.end>total }) throw IOException("视频样本超出资源大小")
-        return this
+        var lastError: IOException? = null
+        // 逐个候选节点尝试读取视频索引；单个节点 443 不可达（如 CDN 节点故障）时自动切换到下一清晰度/节点
+        for (candidate in info.candidates) {
+            active=candidate; total=0; prefix=byteArrayOf()
+            try {
+                val first=range(0,256*1024-1); total=first.total
+                prefix=first.bytes
+                val end=MediaCrypto.headerEnd(first.bytes,total)
+                val header=if(end>first.bytes.size) first.bytes+range(first.bytes.size.toLong(),end-1L).bytes else first.bytes.copyOf(end)
+                val p=MediaCrypto.prepare(header,active.key)
+                if(p.samples.any { it.end>total }) throw IOException("视频样本超出资源大小")
+                prepared=p
+                return this
+            } catch (e: IOException) {
+                lastError=e
+            }
+        }
+        throw lastError ?: IOException("所有播放节点均不可用")
     }
     /** Bounded warm-up. Retains raw bytes so decryption still uses the absolute sample offset. */
     @Synchronized fun warm(): RemoteVideo {
@@ -60,7 +72,7 @@ class RemoteVideo(private val http: OkHttpClient, val info: StreamInfo): Closeab
         val available=(minOf(end,cached.size.toLong())-start).coerceAtLeast(0).toInt()
         val first=if(available>0) cached.copyOfRange(start.toInt(),start.toInt()+available) else byteArrayOf()
         val raw=if(start+available<end) first+range(start+available,end-1).bytes else first
-        return MediaCrypto.decrypt(raw,start,info.key,prepared)
+        return MediaCrypto.decrypt(raw,start,active.key,prepared)
     }
     override fun close() { synchronized(calls) { closed=true; calls.toList().forEach { it.cancel() }; calls.clear() } }
 }
